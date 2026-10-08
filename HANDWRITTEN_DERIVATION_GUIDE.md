@@ -1,14 +1,14 @@
-# Handwritten derivation guide
+# Гайд по рукописному выводу формул
 
-This file is a preparation aid, not a substitute for `hw1_handwritten.pdf`.
-Rewrite the derivation legibly by hand, scan/photograph it, and combine the
-pages into one PDF.
+Этот файл помогает подготовить рукописную часть, но не заменяет
+`hw1_handwritten.pdf`. Перепиши вывод формул разборчиво от руки,
+отсканируй или сфотографируй страницы и объедини их в один PDF-файл.
 
-## 1. State the architecture and spatial sizes
+## 1. Архитектура и пространственные размеры
 
-For input `B × 3 × S × S`, where `S` is divisible by 16:
+Входной тензор имеет форму `B × 3 × S × S`, где `S` делится на 16.
 
-| Stage | Output shape |
+| Этап | Форма выходного тензора |
 |---|---|
 | Conv 7×7, stride 2, 3→32 | `B × 32 × S/2 × S/2` |
 | ReLU + MaxPool 3×3, stride 2 | `B × 32 × S/4 × S/4` |
@@ -17,113 +17,149 @@ For input `B × 3 × S × S`, where `S` is divisible by 16:
 | Conv 1×1, 128→256 + ReLU | `B × 256 × S/8 × S/8` |
 | Conv 3×3, stride 2, 256→256 + ReLU | `B × 256 × S/16 × S/16` |
 | Conv 1×1, 256→512 + ReLU | `B × 512 × S/16 × S/16` |
-| Global average pool | `B × 512` |
+| Global Average Pooling | `B × 512` |
 | Linear 512→256 + ReLU, Linear 256→100 | `B × 100` |
 
-There is no BatchNorm because none is listed in the assigned layer table.
-Convolutions have no bias; both linear layers have bias.
+BatchNorm в модели нет, потому что он не указан в таблице архитектуры из
+задания. У свёрточных слоёв нет смещения (`bias=False`), а у двух линейных
+слоёв смещения есть.
 
-## 2. FLOPs
+## 2. Количество операций FLOPs
 
-State the convention: one multiply-accumulate is two FLOPs. Count a ReLU
-comparison as one operation, each MaxPool comparison as one operation, and
-the global average of `n` values as `n-1` additions plus one division.
+Нужно явно записать принятое соглашение: одна операция
+multiply-accumulate, то есть умножение с накоплением, считается за два FLOP.
+Одно сравнение ReLU считается за одну операцию, каждое сравнение в MaxPool —
+за одну операцию, а среднее по `n` значениям — за `n−1` сложений и одно
+деление, то есть всего за `n` операций.
 
-For a convolution:
-
-```text
-F_conv = 2 B H_out W_out C_out C_in K²
-```
-
-The six convolution terms are:
+Для свёртки:
 
 ```text
-2352 B S²
-6400 B S²
-2304 B S²
-1024 B S²
-4608 B S²
-1024 B S²
+F_conv = 2 B H_out W_out C_out C_in K²,
 ```
 
-They sum to `17712 B S²`. The six convolution ReLUs contribute
-`21 B S²`, MaxPool contributes `16 B S²`, and global average pooling
-contributes `2 B S²`.
+где `H_out` и `W_out` — высота и ширина выхода, `C_in` и `C_out` — число
+входных и выходных каналов, а `K` — размер квадратного ядра.
 
-The classifier contributes:
+Для шести свёрток получаются следующие слагаемые:
+
+```text
+Conv 7×7, 3→32:       2 · B · (S/2)²  · 32  · 3   · 7² = 2352 B S²
+Conv 5×5, 32→64:      2 · B · (S/4)²  · 64  · 32  · 5² = 6400 B S²
+Conv 3×3, 64→128:     2 · B · (S/8)²  · 128 · 64  · 3² = 2304 B S²
+Conv 1×1, 128→256:    2 · B · (S/8)²  · 256 · 128 · 1² = 1024 B S²
+Conv 3×3, 256→256:    2 · B · (S/16)² · 256 · 256 · 3² = 4608 B S²
+Conv 1×1, 256→512:    2 · B · (S/16)² · 512 · 256 · 1² = 1024 B S²
+```
+
+Суммарно свёртки дают:
+
+```text
+(2352 + 6400 + 2304 + 1024 + 4608 + 1024) B S²
+= 17712 B S².
+```
+
+Шесть ReLU после свёрток обрабатывают все элементы соответствующих выходных
+тензоров:
+
+```text
+(8 + 4 + 2 + 4 + 1 + 2) B S² = 21 B S².
+```
+
+MaxPool создаёт `2 B S²` выходных элементов и выполняет восемь сравнений для
+каждого окна 3×3:
+
+```text
+8 · 2 B S² = 16 B S².
+```
+
+Global Average Pooling обрабатывает `2 B S²` элементов, поэтому его вклад:
+
+```text
+2 B S².
+```
+
+Классификатор включает две линейные операции, смещения и ReLU между ними:
 
 ```text
 2·512·256·B + 256B + 256B + 2·256·100·B + 100B
 = 313956 B.
 ```
 
-Final formula:
+Итоговая формула:
 
 ```text
 FLOPs(S,B) = B (17751 S² + 313956).
 ```
 
-## 3. Peak allocated memory
+## 3. Пиковая выделенная память
 
-State the convention: FP32 uses four bytes; inference mode; in-place ReLUs;
-the model parameters and input owned by the caller remain allocated.
-The model has `1,040,324` parameters.
+Нужно записать следующие предположения:
 
-For a sequential network, an operator temporarily holds its input and output.
-The largest live set occurs at MaxPool:
+- FP32 занимает четыре байта на одно число;
+- вычисление выполняется в режиме инференса;
+- ReLU выполняется на месте (`inplace=True`);
+- параметры модели и входной тензор, которым владеет вызывающий код, остаются
+  в памяти на протяжении всего forward pass.
 
-```text
-original input:       3 B S²
-Conv7×7 output:       8 B S²
-MaxPool output:       2 B S²
-total:               13 B S² elements.
-```
-
-Thus:
+В модели `1 040 324` параметра. Для последовательной сети во время выполнения
+оператора одновременно существуют его вход и выход. Самый большой набор живых
+тензоров возникает при выполнении MaxPool:
 
 ```text
-Memory(S,B) = 4 (1,040,324 + 13 B S²) bytes.
+исходный вход:         3 B S²
+выход Conv 7×7:        8 B S²
+выход MaxPool:         2 B S²
+всего:                13 B S² элементов.
 ```
 
-Explicitly state that this equation excludes cuDNN workspace, allocator
-rounding and unrelated GPU allocations. Their effect is evaluated from the
-measured residual and OOM cases.
-
-## 4. Bytes moved
-
-Assume every operator reads each input and weight tensor once and writes each
-output once. ReLU is in-place but still reads and writes its activation.
-Caches and kernel fusion are ignored.
-
-After summing all 17 operators:
+Следовательно:
 
 ```text
-BytesMoved(S,B) = 4 (91 B S² + 2148 B + 1,040,324) bytes.
+Memory(S,B) = 4 (1 040 324 + 13 B S²) байт.
 ```
 
-## 5. Latency
+Эта формула намеренно не учитывает рабочую память cuDNN, округление аллокатора
+и посторонние выделения памяти на GPU. Их влияние нужно обсудить по разнице
+между предсказаниями и измерениями, включая случаи OOM.
 
-For operator `l`, let `F_l` be FLOPs and `Q_l` bytes moved. Use three
-positive calibrated parameters:
+## 4. Объём перемещённых данных
 
-- `t_launch`: launch overhead per operator;
-- `P_eff`: effective FLOP/s;
-- `BW_eff`: effective byte/s.
+Предполагается, что каждый оператор один раз читает входной тензор и веса и
+один раз записывает выходной тензор. ReLU выполняется на месте, но всё равно
+читает и записывает активацию. Кэширование и слияние ядер не учитываются.
 
-Layer-wise roofline formula:
+После суммирования трафика всех 17 операторов:
+
+```text
+BytesMoved(S,B) = 4 (91 B S² + 2148 B + 1 040 324) байт.
+```
+
+## 5. Задержка
+
+Для оператора `l` обозначим через `F_l` число FLOPs, а через `Q_l` — число
+перемещённых байтов. Используются три положительных калибруемых параметра:
+
+- `t_launch` — накладные расходы запуска одного оператора;
+- `P_eff` — эффективная производительность в FLOP/s;
+- `BW_eff` — эффективная пропускная способность памяти в байт/с.
+
+Послойная roofline-модель:
 
 ```text
 Latency(S,B; θ) =
 Σ_l [t_launch + max(F_l(S,B)/P_eff, Q_l(S,B)/BW_eff)].
 ```
 
-There are 17 conceptual operators. Explain that the launch term dominates
-small workloads, memory time dominates low arithmetic-intensity layers, and
-compute time dominates sufficiently large/high-intensity layers.
+В модели выделено 17 концептуальных операторов. Для маленьких объёмов работы
+доминируют накладные расходы запуска. Для слоёв с низкой арифметической
+интенсивностью доминирует время обмена с памятью, а для достаточно больших
+вычислительно интенсивных слоёв — время вычислений.
 
-## 6. Energy
+## 6. Энергия
 
-Energy is measured for the whole GPU without idle-power subtraction. Use:
+Энергия измеряется для всего GPU без вычитания энергопотребления в простое.
+Используется модель:
 
 ```text
 Energy(S,B; θ_E) =
@@ -132,22 +168,43 @@ Energy(S,B; θ_E) =
 + e_byte BytesMoved(S,B).
 ```
 
-The three non-negative coefficients are fitted on calibration points. State
-that the model is phenomenological: DVFS, temperature and concurrent processes
-are not explicitly represented.
+Три неотрицательных коэффициента подбираются по калибровочным точкам:
 
-## 7. Measurement assumptions
+- `e_launch` — энергия запуска одного оператора;
+- `e_flop` — энергия одной вычислительной операции;
+- `e_byte` — энергия перемещения одного байта.
 
-Write these explicitly:
+Нужно отметить, что это феноменологическая модель: она явно не описывает
+динамическое изменение частот и напряжения (DVFS), температуру GPU и нагрузку
+от параллельных процессов.
 
-- `model.eval()` and `torch.inference_mode()`;
-- FP32, TF32 disabled;
-- `torch.backends.cudnn.benchmark = False`;
-- random inputs;
-- CUDA-event median latency after warm-up;
-- peak `torch.cuda.max_memory_allocated()`;
-- whole-GPU NVML energy counter, or integrated NVML power if the counter is
-  unsupported;
-- base-grid points calibrate the parameters; every point with a random `S`
-  or random `B` is validation data;
-- OOM is recorded, not discarded.
+## 7. Предположения протокола измерений
+
+В рукописной работе нужно явно перечислить:
+
+- модель работает в `model.eval()` и `torch.inference_mode()`;
+- вычисления выполняются в FP32, TF32 отключён;
+- установлено `torch.backends.cudnn.benchmark = False`;
+- вместо настоящих изображений используются случайные входные тензоры;
+- latency — медиана измерений CUDA events после прогрева;
+- память — пик `torch.cuda.max_memory_allocated()` во время одного forward pass;
+- энергия всего GPU измеряется накопительным счётчиком NVML, а если он не
+  поддерживается — интегрированием измеряемой через NVML мощности;
+- параметры калибруются по точкам базовой сетки;
+- каждая точка со случайным значением `S` или `B` относится к validation;
+- конфигурации, завершившиеся OOM, записываются в результаты, а не удаляются.
+
+## 8. Что должно оказаться в рукописном PDF
+
+Перед сканированием проверь, что от руки записаны:
+
+1. архитектура и формы тензоров после каждого слоя;
+2. вывод всех слагаемых FLOPs и итоговая формула;
+3. объяснение пикового набора живых тензоров и формула памяти;
+4. предположение о трафике и формула `BytesMoved`;
+5. модели latency и energy с расшифровкой всех параметров;
+6. предположения и протокол измерений;
+7. подпись, что `S` кратно 16, а `B` — размер батча.
+
+Итоговый файл должен называться `hw1_handwritten.pdf` и лежать в корне
+репозитория.
