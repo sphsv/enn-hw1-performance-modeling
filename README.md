@@ -14,6 +14,10 @@ The handwritten derivation must be added as `hw1_handwritten.pdf`.
 `HANDWRITTEN_DERIVATION_GUIDE.md` contains the checked equations and
 assumptions to rewrite by hand.
 
+For a complete Russian-language explanation of the assignment, implementation,
+current completion status and remaining steps, see
+`HW1_FULL_WALKTHROUGH_RU.md`.
+
 ## Status
 
 The code implementation and synthetic checks are complete. Final measurements
