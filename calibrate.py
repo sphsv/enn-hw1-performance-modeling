@@ -139,8 +139,11 @@ def main() -> None:
     raw["is_validation"] = raw["is_validation"].astype(str).str.lower().eq("true")
     successful = raw[raw["status"].eq("ok")].copy()
     calibration = successful[~successful["is_validation"]]
+    validation = successful[successful["is_validation"]]
     if calibration.empty:
         raise SystemExit("No successful calibration rows")
+    if validation.empty:
+        raise SystemExit("No successful held-out validation rows")
     latency_theta = fit_latency(calibration)
 
     energy_calibration = calibration[np.isfinite(calibration["energy_j"])]
@@ -155,6 +158,10 @@ def main() -> None:
             "latency": int(len(calibration)),
             "energy": int(len(energy_calibration)),
         },
+        "split": {
+            "calibration": "is_validation=false; base S x base B only",
+            "validation": "is_validation=true; any random S or random B; never used for fitting",
+        },
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(payload, indent=2) + "\n")
@@ -167,7 +174,10 @@ def main() -> None:
             "oom": int(raw["status"].eq("OOM").sum()),
             "calibration": int((~raw["is_validation"]).sum()),
             "validation": int(raw["is_validation"].sum()),
+            "successful_calibration": int(len(calibration)),
+            "successful_validation": int(len(validation)),
         },
+        "split_definition": payload["split"],
     }
     args.summary_output.parent.mkdir(parents=True, exist_ok=True)
     args.summary_output.write_text(json.dumps(summary, indent=2) + "\n")

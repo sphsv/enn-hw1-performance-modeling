@@ -50,6 +50,11 @@ It excludes hidden cuDNN workspaces and allocator bookkeeping:
 Memory(S,B) = 4 (1,040,324 + 13 B S²) bytes.
 ```
 
+Memory is **not fitted or learned**. It is calculated directly from tensor
+lifetimes and parameter count. The measured peak is collected only to check
+this analytical calculation, quantify workspace/allocator effects and compare
+the predicted boundary with actual OOM configurations.
+
 Ideal tensor traffic assumes one read of each input/weight and one write of
 each output per operator:
 
@@ -84,7 +89,9 @@ additional random coordinates are:
 
 All 132 Cartesian-product configurations are measured. The 63 base×base points
 are used for calibration. Any configuration containing a random coordinate is
-held out, giving 69 validation points.
+held out, giving 69 validation points. Only successful calibration rows are
+passed to the latency and energy fit. Held-out validation rows are never used
+to choose parameters; they are used only for the final error metrics and plots.
 
 ## Measurement protocol
 
@@ -136,16 +143,19 @@ results/
 ├── theta.json
 ├── analysis_summary.json
 └── figures/
-    ├── latency_surface.png
-    ├── memory_surface.png
-    ├── energy_surface.png
+    ├── latency_by_batch.png
+    ├── memory_by_batch.png
+    ├── energy_by_batch.png
     ├── predicted_vs_measured.png
     └── latency_regimes.png
 ```
 
-Every surface contains the predicted surface and measured points together.
-Calibration and held-out validation points are distinguished in the
-predicted-versus-measured figure.
+The three by-batch figures use readable 2D small multiples rather than a dense
+3D surface. Every panel overlays the model/calculation with measured points:
+circles are calibration points, triangles are genuinely held-out validation
+points, and red crosses mark OOM configurations. The predicted-versus-measured
+figure also reports validation MAPE and keeps calibration and validation
+visually distinct.
 
 ## Discussion
 

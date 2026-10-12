@@ -439,16 +439,18 @@ e_launch, e_flop, e_byte.
 Код должен создать пять файлов:
 
 ```text
-latency_surface.png
-memory_surface.png
-energy_surface.png
+latency_by_batch.png
+memory_by_batch.png
+energy_by_batch.png
 predicted_vs_measured.png
 latency_regimes.png
 ```
 
-Поверхности содержат предсказание и настоящие точки. На memory-графике OOM
-показывается красными крестами. Scatter сравнивает measured и predicted, а
-regime-график показывает launch-, memory- и compute-bound области.
+Первые три графика сделаны как понятные 2D small multiples: отдельная панель
+для каждого batch. Линия показывает модель или аналитический расчёт, кружки —
+calibration-точки, треугольники — held-out validation, красные кресты — OOM.
+Scatter сравнивает measured и model/analytical values и показывает validation
+MAPE. Regime-график показывает launch-, memory- и compute-bound области.
 
 ### 3.7. `tests/test_hw1.py`: автоматические проверки
 
@@ -525,6 +527,21 @@ regime-график показывает launch-, memory- и compute-bound об�
 полный эксперимент на T4/P100 или другой NVIDIA GPU с памятью не более 16 ГБ.
 Без него невозможно честно создать обязательные результаты, калибровочные
 параметры, графики и финальное обсуждение.
+
+### Как учтён общий комментарий преподавателя
+
+1. **Непонятные графики.** Плотные 3D-поверхности заменены на 2D-панели по
+   каждому batch. На каждой панели одновременно видны линия модели,
+   calibration-точки, held-out validation и OOM. Оси и единицы подписаны.
+2. **«Зачем предсказывать память?»** Память у нас не обучается и не
+   предсказывается fitted-моделью. `Memory(S,B)` напрямую считается по числу
+   параметров и времени жизни тензоров. Реальный peak memory измеряется только
+   для проверки влияния cuDNN workspace/аллокатора и сравнения с OOM.
+3. **Train/test для latency и energy.** Fit использует только успешные строки
+   с `is_validation=false`, то есть base×base. Все точки со случайным `S` или
+   `B` имеют `is_validation=true`, никогда не участвуют в fit и используются
+   только для итоговых метрик и графиков. В `theta.json` и
+   `analysis_summary.json` правило split записывается явно.
 
 ---
 
@@ -699,8 +716,8 @@ results/analysis_summary.json
 .venv/bin/python plots.py
 ```
 
-Проверить наличие пяти PNG, подписи осей, единицы, измеренные точки и
-предсказанные поверхности.
+Проверить наличие пяти PNG, подписи осей, единицы, линии модели/аналитического
+расчёта, calibration-точки и held-out validation-точки.
 
 ### Шаг 6. Написать итоговый анализ
 
@@ -712,7 +729,7 @@ results/analysis_summary.json
 4. validation-ошибки latency, memory и energy;
 5. где видны launch-, memory- и compute-bound режимы;
 6. насколько формула памяти предсказывает OOM;
-7. почему реальные точки отклоняются от поверхностей.
+7. почему реальные точки отклоняются от аналитических кривых.
 
 Нельзя писать этот раздел до измерений: иначе числа будут выдуманными.
 
@@ -738,9 +755,9 @@ measure.py
 calibrate.py
 results/measurements.csv
 results/theta.json
-results/figures/latency_surface.png
-results/figures/memory_surface.png
-results/figures/energy_surface.png
+results/figures/latency_by_batch.png
+results/figures/memory_by_batch.png
+results/figures/energy_by_batch.png
 results/figures/predicted_vs_measured.png
 results/figures/latency_regimes.png
 ```

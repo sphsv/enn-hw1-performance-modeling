@@ -17,50 +17,100 @@ from equations import energy, latency, latency_components, memory
 ROOT = Path(__file__).resolve().parent
 
 
-def surface_plot(frame, prediction, z_column, z_scale, z_label, output, oom=False):
-    sizes = np.linspace(32, 512, 80)
-    batches = np.geomspace(1, 256, 60)
-    size_grid, batch_grid = np.meshgrid(sizes, batches)
-    predicted = prediction(size_grid, batch_grid) / z_scale
+def metric_by_batch_plot(
+    frame,
+    prediction,
+    value_column,
+    value_scale,
+    value_label,
+    title,
+    model_label,
+    output,
+    show_oom=False,
+):
+    """Plot all 132 configurations as readable per-batch 2D panels."""
+    batches = sorted(frame["batch"].unique())
+    columns = 3
+    rows = int(np.ceil(len(batches) / columns))
+    figure, axes = plt.subplots(
+        rows,
+        columns,
+        figsize=(15, 3.35 * rows),
+        sharex=True,
+        sharey=True,
+        squeeze=False,
+    )
+    size_curve = np.linspace(32, 512, 300)
+    flat_axes = list(axes.flat)
 
-    figure = plt.figure(figsize=(9, 6.5))
-    axis = figure.add_subplot(111, projection="3d")
-    axis.plot_surface(
-        size_grid,
-        np.log2(batch_grid),
-        predicted,
-        cmap="viridis",
-        alpha=0.55,
-        linewidth=0,
-    )
-    successful = frame[frame["status"].eq("ok") & frame[z_column].notna()]
-    axis.scatter(
-        successful["image_size"],
-        np.log2(successful["batch"]),
-        successful[z_column] / z_scale,
-        color="black",
-        s=18,
-        label="measured",
-    )
-    if oom:
-        failed = frame[frame["status"].eq("OOM")]
-        if not failed.empty:
+    for axis, batch in zip(flat_axes, batches, strict=False):
+        axis.plot(
+            size_curve,
+            prediction(size_curve, batch) / value_scale,
+            color="#0072b2",
+            linewidth=1.8,
+            label=model_label,
+        )
+        batch_rows = frame[frame["batch"].eq(batch)]
+        successful = batch_rows[
+            batch_rows["status"].eq("ok") & batch_rows[value_column].notna()
+        ]
+        calibration = successful[~successful["is_validation"]]
+        validation = successful[successful["is_validation"]]
+        axis.scatter(
+            calibration["image_size"],
+            calibration[value_column] / value_scale,
+            color="#4d4d4d",
+            marker="o",
+            s=27,
+            label="measured: calibration",
+            zorder=3,
+        )
+        axis.scatter(
+            validation["image_size"],
+            validation[value_column] / value_scale,
+            color="#e69f00",
+            marker="^",
+            s=34,
+            label="measured: held-out validation",
+            zorder=3,
+        )
+        if show_oom:
+            failed = batch_rows[batch_rows["status"].eq("OOM")]
             axis.scatter(
                 failed["image_size"],
-                np.log2(failed["batch"]),
-                prediction(failed["image_size"], failed["batch"]) / z_scale,
-                color="red",
+                prediction(failed["image_size"], failed["batch"]) / value_scale,
+                color="#d55e00",
                 marker="x",
                 s=45,
-                label="OOM (at predicted memory)",
+                linewidths=1.5,
+                label="OOM at analytical estimate",
+                zorder=4,
             )
-    axis.set_xlabel("Image size S [pixels]")
-    axis.set_ylabel("Batch size B")
-    axis.set_zlabel(z_label)
-    batch_ticks = np.arange(0, 9)
-    axis.set_yticks(batch_ticks, [str(2**value) for value in batch_ticks])
-    axis.legend()
-    figure.subplots_adjust(left=0.02, right=0.96, bottom=0.06, top=0.98)
+        axis.set_title(f"Batch B={batch}", fontsize=10)
+        axis.set_yscale("log")
+        axis.grid(alpha=0.25, which="both")
+
+    for axis in flat_axes[len(batches) :]:
+        axis.set_visible(False)
+    for axis in axes[-1, :]:
+        axis.set_xlabel("Image size S [pixels]")
+    for axis in axes[:, 0]:
+        axis.set_ylabel(value_label)
+
+    handles_by_label = {}
+    for axis in flat_axes[: len(batches)]:
+        handles, labels = axis.get_legend_handles_labels()
+        handles_by_label.update(zip(labels, handles, strict=True))
+    figure.legend(
+        list(handles_by_label.values()),
+        list(handles_by_label.keys()),
+        loc="lower center",
+        ncol=4 if show_oom else 3,
+        frameon=False,
+    )
+    figure.suptitle(title, fontsize=14)
+    figure.tight_layout(rect=(0, 0.045, 1, 0.97))
     figure.savefig(output, dpi=180)
     plt.close(figure)
 
@@ -77,23 +127,32 @@ def prediction_scatter(frame, latency_theta, energy_theta, output):
         successful["image_size"], successful["batch"], energy_theta
     )
     panels = (
-        ("latency_s", "latency_pred", 1e3, "Latency [ms]"),
-        ("peak_memory_bytes", "memory_pred", 2**30, "Peak memory [GiB]"),
-        ("energy_j", "energy_pred", 1.0, "Energy [J]"),
+        ("latency_s", "latency_pred", 1e-3, "Latency [ms]", "model"),
+        (
+            "peak_memory_bytes",
+            "memory_pred",
+            2**30,
+            "Peak memory [GiB]",
+            "analytical estimate",
+        ),
+        ("energy_j", "energy_pred", 1.0, "Energy [J]", "model"),
     )
     figure, axes = plt.subplots(1, 3, figsize=(15, 4.6))
-    for axis, (actual, predicted, scale, label) in zip(axes, panels, strict=True):
+    for axis, (actual, predicted, scale, label, prediction_name) in zip(
+        axes, panels, strict=True
+    ):
         valid = successful[actual].notna() & successful[predicted].notna()
         subset = successful[valid]
-        for is_validation, marker, name in (
-            (False, "o", "calibration"),
-            (True, "^", "validation"),
+        for is_validation, marker, color, name in (
+            (False, "o", "#777777", "calibration (used for fit)"),
+            (True, "^", "#0072b2", "held-out validation"),
         ):
             split = subset[subset["is_validation"].eq(is_validation)]
             axis.scatter(
                 split[actual] / scale,
                 split[predicted] / scale,
                 marker=marker,
+                color=color,
                 alpha=0.75,
                 label=name,
             )
@@ -102,11 +161,31 @@ def prediction_scatter(frame, latency_theta, energy_theta, output):
         )
         low, high = np.nanmin(values), np.nanmax(values)
         axis.plot([low, high], [low, high], "k--", linewidth=1, label="ideal")
+        validation = subset[subset["is_validation"]]
+        if not validation.empty:
+            denominator = np.maximum(
+                np.abs(validation[actual].to_numpy()),
+                np.finfo(np.float64).eps,
+            )
+            validation_mape = 100.0 * np.mean(
+                np.abs(
+                    validation[predicted].to_numpy()
+                    - validation[actual].to_numpy()
+                )
+                / denominator
+            )
+            axis.set_title(f"Validation MAPE: {validation_mape:.1f}%")
         axis.set_xlabel(f"Measured {label}")
-        axis.set_ylabel(f"Predicted {label}")
-        axis.grid(alpha=0.25)
+        axis.set_ylabel(f"{prediction_name.title()} {label}")
+        axis.set_xscale("log")
+        axis.set_yscale("log")
+        axis.grid(alpha=0.25, which="both")
     axes[0].legend()
-    figure.tight_layout()
+    figure.suptitle(
+        "Calibration vs held-out validation (memory is analytical, not fitted)",
+        fontsize=14,
+    )
+    figure.tight_layout(rect=(0, 0, 1, 0.94))
     figure.savefig(output, dpi=180)
     plt.close(figure)
 
@@ -170,30 +249,36 @@ def main() -> None:
     theta = json.loads(args.theta.read_text())
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    surface_plot(
+    metric_by_batch_plot(
         frame,
         lambda size, batch: latency(size, batch, theta["latency"]),
         "latency_s",
         1e-3,
         "Latency [ms]",
-        args.output_dir / "latency_surface.png",
+        "Latency: measured points and calibrated model",
+        "calibrated latency model",
+        args.output_dir / "latency_by_batch.png",
     )
-    surface_plot(
+    metric_by_batch_plot(
         frame,
         memory,
         "peak_memory_bytes",
         2**30,
         "Peak allocated memory [GiB]",
-        args.output_dir / "memory_surface.png",
-        oom=True,
+        "Memory: measured peak and direct analytical calculation",
+        "analytical memory (not fitted)",
+        args.output_dir / "memory_by_batch.png",
+        show_oom=True,
     )
-    surface_plot(
+    metric_by_batch_plot(
         frame,
         lambda size, batch: energy(size, batch, theta["energy"]),
         "energy_j",
         1.0,
         "Energy [J]",
-        args.output_dir / "energy_surface.png",
+        "Energy: measured points and calibrated model",
+        "calibrated energy model",
+        args.output_dir / "energy_by_batch.png",
     )
     prediction_scatter(
         frame,
