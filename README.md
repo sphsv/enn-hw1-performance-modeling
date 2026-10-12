@@ -101,6 +101,16 @@ held out, giving 69 validation points.
 
 ## Reproduction
 
+### Google Colab (recommended for the final T4 run)
+
+Open `HW1_COLAB_RUNNER.ipynb` in Colab, select a T4 GPU and run the cells from
+top to bottom. The notebook is only an orchestration interface: it invokes the
+same `measure.py`, `calibrate.py` and `plots.py` files used by the command-line
+workflow. It stores the project in Google Drive by default, so an interrupted
+132-point measurement can be resumed.
+
+### Command line
+
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
