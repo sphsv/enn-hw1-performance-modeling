@@ -1,0 +1,69 @@
+{
+  "metrics": {
+    "calibration": {
+      "latency_seconds": {
+        "count": 63,
+        "mae": 0.002715816285465475,
+        "rmse": 0.009168845762798201,
+        "mape_percent": 11.302713887987906,
+        "median_ape_percent": 7.940579365952096,
+        "r2": 0.9788033070100088
+      },
+      "memory_bytes": {
+        "count": 63,
+        "mae": 148882834.53968254,
+        "rmse": 298622021.71985483,
+        "mape_percent": 53.97550934075079,
+        "median_ape_percent": 51.520596847865406,
+        "r2": 0.8594593613863348
+      },
+      "energy_joules": {
+        "count": 63,
+        "mae": 0.09472729634585648,
+        "rmse": 0.15912957014690632,
+        "mape_percent": 68.15437891002819,
+        "median_ape_percent": 16.862468888088824,
+        "r2": 0.99868355562261
+      }
+    },
+    "validation": {
+      "latency_seconds": {
+        "count": 69,
+        "mae": 0.0044246592614295985,
+        "rmse": 0.01124347413093988,
+        "mape_percent": 8.66452847731965,
+        "median_ape_percent": 6.136466743683479,
+        "r2": 0.9741658723015955
+      },
+      "memory_bytes": {
+        "count": 69,
+        "mae": 236927290.20289856,
+        "rmse": 405222074.2317892,
+        "mape_percent": 51.72418276443816,
+        "median_ape_percent": 52.33882651301389,
+        "r2": 0.7846898775016946
+      },
+      "energy_joules": {
+        "count": 69,
+        "mae": 0.23376630605247822,
+        "rmse": 0.5316897412169193,
+        "mape_percent": 30.281856864622718,
+        "median_ape_percent": 9.197256970813328,
+        "r2": 0.9875392547400706
+      }
+    }
+  },
+  "rows": {
+    "total": 132,
+    "successful": 132,
+    "oom": 0,
+    "calibration": 63,
+    "validation": 69,
+    "successful_calibration": 63,
+    "successful_validation": 69
+  },
+  "split_definition": {
+    "calibration": "is_validation=false; base S x base B only",
+    "validation": "is_validation=true; any random S or random B; never used for fitting"
+  }
+}

@@ -1,170 +1,109 @@
-# Homework 1 — analytical performance model of a small CNN
+# Homework 1 — аналитическая модель производительности CNN
 
-Assignment: [Efficient Models course — Homework 1](https://github.com/On-Point-RND/Efficient-Models-course-ITMO-2026/blob/main/home_work_one.md).
+Для заданной CNN выведены функции `FLOPs`, `Memory`, `Latency` и `Energy`, выполнены измерения на Tesla T4, параметры моделей подобраны только по calibration-части и проверены на отдельных validation-точках.
 
-This repository implements the CNN and four analytical functions required by
-the assignment:
+Рукописный вывод формул находится в [`hw1_handwritten.pdf`](hw1_handwritten.pdf). Код формул — в [`equations.py`](equations.py), сеть — в [`models.py`](models.py), измерения и калибровка — в [`measure.py`](measure.py) и [`calibrate.py`](calibrate.py).
 
-- `FLOPs(S, B)`;
-- peak allocated `Memory(S, B)`;
-- calibrated layer-wise roofline `Latency(S, B, θ)`;
-- calibrated whole-GPU `Energy(S, B, θ_E)`.
+## Сеть и формулы
 
-The handwritten derivation must be added as `hw1_handwritten.pdf`.
-`HANDWRITTEN_DERIVATION_GUIDE.md` contains the checked equations and
-assumptions to rewrite by hand.
+Сеть: шесть сверток без bias, `ReLU(inplace=True)` после каждой свертки, один MaxPool, Global Average Pooling и классификатор `512→256→100`. Все измерения в FP32, `eval()` и `torch.inference_mode()`. Число параметров — 1 040 324.
 
-For a complete Russian-language explanation of the assignment, implementation,
-current completion status and remaining steps, see
-`HW1_FULL_WALKTHROUGH_RU.md`.
-
-## Status
-
-The code implementation and synthetic checks are complete. Final measurements
-are intentionally not reported yet: the assignment requires a low-grade GPU
-such as a T4/P100 or a local NVIDIA GPU with at most 16 GB. Results from the
-A100 80 GB used only for implementation smoke tests would not meet that
-requirement. After the low-grade GPU run, this section will contain the
-measured errors, OOM boundary and one-page discussion.
-
-## Model
-
-The network follows the assigned layer table exactly: six convolutions with an
-in-place ReLU after each, one MaxPool, global average pooling and a
-512→256→100 classifier. Convolutions have no bias. The table does not list
-BatchNorm, so the implementation does not add it. The model has 1,040,324 FP32
-parameters.
-
-## Closed-form equations
-
-Using one MAC = two FLOPs:
+При соглашении «один MAC = два FLOP» получены формулы:
 
 ```text
-FLOPs(S,B) = B (17,751 S² + 313,956).
+FLOPs(S,B)      = B (17 751 S² + 313 956)
+Memory(S,B)     = 4 (1 040 324 + 13 B S²) bytes
+BytesMoved(S,B) = 4 (91 B S² + 2 148 B + 1 040 324) bytes
 ```
 
-The analytical memory peak includes model parameters and live FP32 tensors.
-It excludes hidden cuDNN workspaces and allocator bookkeeping:
+Для 17 последовательных операторов используется layer-wise roofline:
 
 ```text
-Memory(S,B) = 4 (1,040,324 + 13 B S²) bytes.
+Latency(S,B;θ) = Σ_l [t_launch + max(F_l(S,B)/P_eff, Q_l(S,B)/BW_eff)]
 ```
 
-Memory is **not fitted or learned**. It is calculated directly from tensor
-lifetimes and parameter count. The measured peak is collected only to check
-this analytical calculation, quantify workspace/allocator effects and compare
-the predicted boundary with actual OOM configurations.
-
-Ideal tensor traffic assumes one read of each input/weight and one write of
-each output per operator:
+Энергия всей GPU на один forward в джоулях моделируется как:
 
 ```text
-BytesMoved(S,B) = 4 (91 B S² + 2,148 B + 1,040,324) bytes.
+Energy(S,B;θ_E) = 17 e_launch
+                + e_flop FLOPs(S,B)
+                + e_byte BytesMoved(S,B)
 ```
 
-Latency is a layer-wise roofline sum over 17 conceptual operators:
+Функции принимают числа и broadcast-совместимые NumPy-массивы.
 
-```text
-Latency(S,B;θ) =
-Σ_l [t_launch + max(F_l(S,B)/P_eff, Q_l(S,B)/BW_eff)].
-```
+## Эксперимент
 
-Whole-GPU energy is modelled with non-negative calibrated coefficients:
+- GPU: Tesla T4, 14.56 GiB; driver 580.82.07.
+- Python 3.13.15; PyTorch 2.11.0+cu130; CUDA 13.0; cuDNN 9.2.7.
+- `cudnn.benchmark=False`; TF32 выключен.
+- Сетка: 11 размеров изображения × 12 batch size = 132 уникальные конфигурации.
+- Calibration: 63 точки базовой сетки. Validation: 69 точек, содержащих хотя бы одну случайную координату; они не использовались при подборе параметров.
+- Latency: медиана повторных измерений CUDA Events.
+- Memory: `torch.cuda.max_memory_allocated()`.
+- Energy: накопительный счётчик NVML, энергия всей GPU на один forward.
 
-```text
-Energy(S,B;θ_E) =
-17 e_launch + e_flop FLOPs(S,B) + e_byte BytesMoved(S,B).
-```
+Полное окружение сохранено в [`results/environment.json`](results/environment.json), параметры — в [`results/theta.json`](results/theta.json), метрики — в [`results/analysis_summary.json`](results/analysis_summary.json).
 
-The functions in `equations.py` accept scalars or broadcast-compatible NumPy
-arrays.
+## Результаты на held-out validation
 
-## Calibration and validation split
+| Величина | MAPE | Median APE | R² |
+|---|---:|---:|---:|
+| Latency | 8.66% | 6.14% | 0.974 |
+| Memory | 51.72% | 52.34% | 0.785 |
+| Energy | 30.28% | 9.20% | 0.988 |
 
-The base grid contains 7 image sizes and 9 batch sizes. With seed 7, the
-additional random coordinates are:
+Все 132 точки завершились успешно. OOM не возник: максимальный измеренный peak — 4.26 GiB при 14.56 GiB доступной памяти; аналитическая оценка для самой тяжелой точки — 3.25 GiB. При возникновении ошибки `measure.py` ловит `torch.cuda.OutOfMemoryError` и записывает статус `OOM`.
 
-- image sizes: 144, 272, 304, 448;
-- batch sizes: 18, 24, 219.
+Модель latency хорошо переносится на невидимые точки. По суммарному времени 27 конфигураций классифицированы как launch-bound, 105 — как compute-bound и 0 — как memory-bound, при этом отдельные операторы (ReLU, pooling, GAP и часть linear/conv) memory-bound; просто их вклад не становится крупнейшим для всего forward.
 
-All 132 Cartesian-product configurations are measured. The 63 base×base points
-are used for calibration. Any configuration containing a random coordinate is
-held out, giving 69 validation points. Only successful calibration rows are
-passed to the latency and energy fit. Held-out validation rows are never used
-to choose parameters; they are used only for the final error metrics and plots.
+Аналитическая memory систематически ниже измеренной, потому что формула намеренно считает только параметры и живые тензоры, а PyTorch также учитывает cuDNN workspace и служебные буферы.
 
-## Measurement protocol
+У energy высокий средний процент ошибки в основном на самых маленьких значениях энергии, где ограничена точность счетчика; median APE 9.20% и R² 0.988.
 
-- one CUDA GPU, FP32, `eval()`, `torch.inference_mode()`;
-- `cudnn.benchmark=False`;
-- TF32 disabled for cuDNN and matrix multiplication;
-- random input tensors;
-- latency is the median of adaptive repeated CUDA-event measurements;
-- memory is `torch.cuda.max_memory_allocated()`;
-- whole-GPU energy uses the NVML cumulative energy counter when available,
-  otherwise concurrent NVML power sampling;
-- OOM configurations are recorded and the process continues;
-- rows are appended immediately, so an interrupted run resumes safely.
+## Результаты
 
-## Reproduction
+### Предсказания и реальные измерения
 
-### Google Colab (recommended for the final T4 run)
+Серые круги использовались для калибровки, синие треугольники относятся к отдельной validation-выборке. Latency и Energy в основном расположены около диагонали; аналитическая memory ниже реального пика.
 
-Open `HW1_COLAB_RUNNER.ipynb` in Colab, select a T4 GPU and run the cells from
-top to bottom. The notebook is only an orchestration interface: it invokes the
-same `measure.py`, `calibrate.py` and `plots.py` files used by the command-line
-workflow. It stores the project in Google Drive by default, so an interrupted
-132-point measurement can be resumed.
+![Predicted versus measured](results/figures/predicted_vs_measured.png)
 
-### Command line
+### Latency для разных batch size
+
+Каждая панель соответствует одному batch size. Синяя линия — модель latency, круги — calibration-точки, треугольники — held-out validation. График показывает, что модель воспроизводит рост времени при увеличении размера изображения и переносится на координаты, которые не участвовали в калибровке.
+
+![Latency by batch](results/figures/latency_by_batch.png)
+
+### Peak memory для разных batch size
+
+Синяя линия — прямой аналитический расчет памяти, точки — значения `torch.cuda.max_memory_allocated()`. Измерения выше формулы из-за workspace cuDNN и служебных буферов PyTorch, которые не входят в аналитическую модель. Красных отметок OOM нет, поскольку все 132 конфигурации поместились в память T4.
+
+![Memory by batch](results/figures/memory_by_batch.png)
+
+### Energy для разных batch size
+
+Синяя линия — калиброванная модель энергии всей GPU на один forward. Точки показывают реальные измерения NVML. Модель хорошо описывает общий рост энергопотребления; наиболее заметная относительная ошибка возникает у маленьких конфигураций, где измеряемая энергия очень мала.
+
+![Energy by batch](results/figures/energy_by_batch.png)
+
+### Режимы latency
+
+По горизонтали показан объем работы `B·S²`, по вертикали — latency. Круги обозначают измерения, иксы — предсказания. Синие точки относятся к launch-bound режиму, зеленые — к compute-bound. Отдельного end-to-end memory-bound участка в измеренной сетке нет, хотя некоторые слои сети ограничены пропускной способностью памяти.
+
+![Latency regimes](results/figures/latency_regimes.png)
+
+Исходные PNG находятся в [`results/figures/`](results/figures/).
+
+## Воспроизведение
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-
 .venv/bin/python -m unittest discover -s tests -v
 .venv/bin/python measure.py
 .venv/bin/python calibrate.py
 .venv/bin/python plots.py
 ```
 
-For a quick implementation check that is not part of the submitted results:
-
-```bash
-.venv/bin/python measure.py --smoke --skip-energy --overwrite
-```
-
-## Outputs
-
-```text
-results/
-├── measurements.csv
-├── environment.json
-├── theta.json
-├── analysis_summary.json
-└── figures/
-    ├── latency_by_batch.png
-    ├── memory_by_batch.png
-    ├── energy_by_batch.png
-    ├── predicted_vs_measured.png
-    └── latency_regimes.png
-```
-
-The three by-batch figures use readable 2D small multiples rather than a dense
-3D surface. Every panel overlays the model/calculation with measured points:
-circles are calibration points, triangles are genuinely held-out validation
-points, and red crosses mark OOM configurations. The predicted-versus-measured
-figure also reports validation MAPE and keeps calibration and validation
-visually distinct.
-
-## Discussion
-
-This section will be completed from the low-grade GPU measurements. It will
-cover:
-
-1. validation error for latency, memory and energy;
-2. the launch-, memory- and compute-bound regions;
-3. the analytical versus observed OOM boundary;
-4. deviations caused by cuDNN algorithm selection/workspace, caching, DVFS and
-   power-counter resolution;
-5. why one set of effective rates cannot reproduce every convolution shape.
+Итоговые данные находятся в [`results/measurements.csv`](results/measurements.csv), а все пять графиков строятся командой `plots.py`.

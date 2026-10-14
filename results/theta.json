@@ -1,0 +1,21 @@
+{
+  "generated_at_utc": "2026-10-12T14:38:04.434472+00:00",
+  "latency": {
+    "launch_seconds_per_kernel": 2.3441292890630865e-05,
+    "effective_flops_per_second": 4362164106099.8433,
+    "effective_bandwidth_bytes_per_second": 85198510369.49678
+  },
+  "energy": {
+    "joules_per_kernel": 0.0052978691788829095,
+    "joules_per_flop": 0.0,
+    "joules_per_byte": 1.1195709357595737e-09
+  },
+  "fit_rows": {
+    "latency": 63,
+    "energy": 63
+  },
+  "split": {
+    "calibration": "is_validation=false; base S x base B only",
+    "validation": "is_validation=true; any random S or random B; never used for fitting"
+  }
+}
